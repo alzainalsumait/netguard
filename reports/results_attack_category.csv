@@ -1,0 +1,4 @@
+model,cv_accuracy,cv_precision,cv_recall,cv_f1,cv_auc,test_accuracy,test_precision,test_recall,test_f1,test_auc,seconds
+RandomForest,0.9988,0.9622,0.9211,0.9372,0.9981,0.742,0.8171,0.5001,0.5233,0.9256,146
+XGBoost,0.9992,0.9611,0.9336,0.9432,0.9999,0.7784,0.8245,0.5634,0.5949,0.9483,76
+MLP,0.9959,0.823,0.9044,0.8444,0.9936,0.7691,0.7327,0.5863,0.5876,0.8883,382
