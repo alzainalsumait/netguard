@@ -5,6 +5,7 @@ Usage (from the src folder, venv active):
     python train_live.py --quick          # small & fast sanity run
     python train_live.py                  # full run
     python train_live.py --keep-port      # also use Destination Port as a feature
+    python train_live.py --no-local       # ignore data/local_flows.csv
     python train_live.py --data-dir D:\\path\\to\\csv_folder
 """
 import argparse
@@ -90,6 +91,11 @@ def main():
     ap.add_argument("--data-dir", default=str(ROOT / "data"))
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--keep-port", action="store_true")
+    ap.add_argument("--local", default=str(ROOT / "data" / "local_flows.csv"),
+                    help="your own labelled flows (made by build_local_dataset.py)")
+    ap.add_argument("--no-local", action="store_true")
+    ap.add_argument("--local-weight", type=float, default=2.0,
+                    help="extra weight for your own flows")
     a = ap.parse_args()
     cap = 3000 if a.quick else 60000
     features = [f for f in FEATURES if a.keep_port or f != "Destination Port"]
@@ -97,16 +103,27 @@ def main():
 
     print(f"Loading CICIDS2017 (cap {cap:,} rows per class per file) ...")
     data = load_cicids(a.data_dir, features, cap, a.quick)
+    data["source"] = "cicids"
+    if not a.no_local and Path(a.local).exists():
+        loc = pd.read_csv(a.local)
+        loc[features] = (loc[features].apply(pd.to_numeric, errors="coerce")
+                         .replace([np.inf, -np.inf], np.nan).fillna(0).astype("float32"))
+        loc = loc[features + ["category"]].assign(source="local")
+        print(f"Adding {len(loc):,} of your own flows from {a.local}: "
+              f"{loc['category'].value_counts().to_dict()}")
+        data = pd.concat([data[features + ["category", "source"]], loc], ignore_index=True)
     print("\nClass counts used for training/testing:")
-    print(data["category"].value_counts().to_string(), "\n")
+    print(data.groupby(["category", "source"]).size().to_string(), "\n")
 
     le = LabelEncoder().fit(data["category"])
     X, y = data[features], le.transform(data["category"])
-    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, stratify=y,
-                                              random_state=SEED)
+    src = data["source"].to_numpy()
+    strat = data["category"] + "|" + data["source"]
+    X_tr, X_te, y_tr, y_te, src_tr, src_te = train_test_split(
+        X, y, src, test_size=0.2, stratify=strat, random_state=SEED)
     counts = np.bincount(y_tr)
     w_class = np.sqrt(counts.max() / counts)                 # gentle class balancing
-    w = w_class[y_tr]
+    w = w_class[y_tr] * np.where(src_tr == "local", a.local_weight, 1.0)
 
     model = XGBClassifier(n_estimators=100 if a.quick else 300, max_depth=8,
                           learning_rate=0.1, tree_method="hist", n_jobs=-1,
@@ -123,6 +140,12 @@ def main():
     print(f"  macro-F1  {f1_score(y_te, pred, average='macro'):.4f}")
     report = classification_report(y_te, pred, target_names=names, zero_division=0)
     print(report)
+
+    if (src_te == "local").any():
+        m = src_te == "local"
+        print(f"Your own flows in the test split ({m.sum()}): accuracy "
+              f"{accuracy_score(y_te[m], pred[m]):.4f}  (same capture sessions as training, "
+              "so optimistic - the real test is a fresh scan with detector.py)\n")
 
     normal = names.index("Normal")                           # binary view of the same model
     y_bin, p_bin = (y_te != normal).astype(int), (pred != normal).astype(int)
