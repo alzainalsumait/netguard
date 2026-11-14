@@ -3,3 +3,7 @@ data/
 models/
 .ipynb_checkpoints/
 netguard.db
+__pycache__/
+src/flows.csv
+src/live_flows.csv
+src/test.pcap
