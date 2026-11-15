@@ -54,6 +54,10 @@ def classify(df, bundle, threshold=ALERT_THRESHOLD):
             "label", "confidence", "total_packets", "total_bytes", "is_alert"]
     if df.empty:
         return pd.DataFrame(columns=cols)
+    missing = [c for c in bundle["feature_columns"] + ["Destination Port", "protocol", "start_time",
+               "src_ip", "dst_ip", "src_port"] if c not in df.columns]
+    if missing:
+        raise ValueError(f"input is missing {len(missing)} required column(s), e.g. {missing[:3]}")
     X = (df[bundle["feature_columns"]].apply(pd.to_numeric, errors="coerce")
          .replace([np.inf, -np.inf], np.nan).fillna(0).astype("float32"))
     proba = bundle["model"].predict_proba(X)
@@ -149,13 +153,20 @@ def main():
     conn = connect(a.db)
     if a.summary:
         return summary(conn)
-    bundle = load_model(a.model)
-    if a.csv:
-        process(pd.read_csv(a.csv), bundle, conn, a.threshold)
-    elif a.pcap:
-        process(flows_from_pcap(a.pcap), bundle, conn, a.threshold)
-    else:
-        run_live(bundle, conn, a.threshold, a.seconds, a.window, a.iface)
+    try:
+        bundle = load_model(a.model)
+        if a.csv:
+            process(pd.read_csv(a.csv), bundle, conn, a.threshold)
+        elif a.pcap:
+            process(flows_from_pcap(a.pcap), bundle, conn, a.threshold)
+        else:
+            run_live(bundle, conn, a.threshold, a.seconds, a.window, a.iface)
+    except FileNotFoundError as e:
+        raise SystemExit(f"ERROR: file not found: {e.filename}")
+    except (ValueError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        raise SystemExit(f"ERROR: could not process the input ({e})")
+    except Exception as e:                      # e.g. Scapy "Not a supported capture file"
+        raise SystemExit(f"ERROR: {type(e).__name__}: {e}")
     print(f"Database: {a.db}")
 
 
